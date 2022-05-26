@@ -1,7 +1,26 @@
-import { AndroidActivityEventData, AndroidActivityNewIntentEventData, AndroidApplication, Application, Utils } from "@nativescript/core";
-import { NdefListenerOptions, NfcApi, NfcNdefData, NfcNdefRecord, NfcTagData, NfcUriProtocols, WriteTagOptions } from "./nfc.common";
+import {
+  AndroidActivityEventData,
+  AndroidActivityNewIntentEventData,
+  AndroidApplication,
+  Application,
+  Utils
+} from "@nativescript/core";
+import {
+  NdefListenerOptions,
+  NfcApi,
+  NfcNdefData,
+  NfcNdefRecord,
+  NfcTagData,
+  NfcUriProtocols,
+  WriteTagOptions
+} from "./nfc.common";
 
 declare let Array: any;
+
+const sdk31Intent = {
+  FLAG_MUTABLE: 33554432,
+  FLAG_IMMUTABLE: 67108864
+};
 
 let onTagDiscoveredListener: (data: NfcTagData) => void = null;
 let onNdefDiscoveredListener: (data: NfcNdefData) => void = null;
@@ -360,7 +379,7 @@ export class Nfc implements NfcApi {
 
   public setOnTagDiscoveredListener(
     callback: (data: NfcTagData) => void
-  ): Promise<any> {
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       onTagDiscoveredListener = callback;
       resolve();
@@ -370,7 +389,7 @@ export class Nfc implements NfcApi {
   public setOnNdefDiscoveredListener(
     callback: (data: NfcNdefData) => void,
     options?: NdefListenerOptions
-  ): Promise<any> {
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       // TODO use options, some day
       onNdefDiscoveredListener = callback;
@@ -378,7 +397,7 @@ export class Nfc implements NfcApi {
     });
   }
 
-  public eraseTag(): Promise<any> {
+  public eraseTag(): Promise<void> {
     return new Promise((resolve, reject) => {
       const intent =
         Application.android.foregroundActivity.getIntent() ||
@@ -412,7 +431,7 @@ export class Nfc implements NfcApi {
     });
   }
 
-  public writeTag(arg: WriteTagOptions): Promise<any> {
+  public writeTag(arg: WriteTagOptions): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
         if (!arg) {
@@ -470,7 +489,7 @@ export class Nfc implements NfcApi {
           activity,
           0,
           this.intent,
-          0
+          android.os.Build.VERSION.SDK_INT < 31 ? 0 : sdk31Intent.FLAG_MUTABLE
         );
 
         // The adapter must be started with the foreground activity.
@@ -575,7 +594,12 @@ export class Nfc implements NfcApi {
           payload[n] = encoded[n];
         }
 
-        records[recordCounter++] = new android.nfc.NdefRecord(tnf, type, id, payload);
+        records[recordCounter++] = new android.nfc.NdefRecord(
+          tnf,
+          type,
+          id,
+          payload
+        );
       }
     }
 
@@ -617,7 +641,12 @@ export class Nfc implements NfcApi {
           payload[n] = encoded[n];
         }
 
-        records[recordCounter++] = new android.nfc.NdefRecord(tnf, type, id, payload);
+        records[recordCounter++] = new android.nfc.NdefRecord(
+          tnf,
+          type,
+          id,
+          payload
+        );
       }
     }
     return records;

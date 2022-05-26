@@ -45,7 +45,7 @@ export class Nfc implements NfcApi, NfcSessionInvalidator {
 
   public setOnTagDiscoveredListener(
     callback: (data: NfcTagData) => void
-  ): Promise<any> {
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       resolve();
     });
@@ -54,7 +54,7 @@ export class Nfc implements NfcApi, NfcSessionInvalidator {
   public setOnNdefDiscoveredListener(
     callback: (data: NfcNdefData) => void,
     options?: NdefListenerOptions
-  ): Promise<any> {
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       if (!Nfc._available()) {
         reject();
@@ -110,7 +110,7 @@ export class Nfc implements NfcApi, NfcSessionInvalidator {
     }
   }
 
-  public stopListening(): Promise<any> {
+  public stopListening(): Promise<void> {
     return new Promise((resolve, reject) => {
       resolve();
     });
