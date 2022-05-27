@@ -11,6 +11,7 @@ import {
   NfcNdefData,
   NfcNdefRecord,
   NfcTagData,
+  NfcRawData,
   NfcUriProtocols,
   WriteTagOptions
 } from "./nfc.common";
@@ -22,6 +23,11 @@ const sdk31Intent = {
   FLAG_IMMUTABLE: 67108864
 };
 
+const sdk28NfcAdapter = {
+  EXTRA_DATA: "android.nfc.extra.DATA"
+};
+
+let onTechDiscoveredListener: (data: NfcRawData) => void = null;
 let onTagDiscoveredListener: (data: NfcTagData) => void = null;
 let onNdefDiscoveredListener: (data: NfcNdefData) => void = null;
 
@@ -55,6 +61,11 @@ export class NfcIntentHandler {
       android.nfc.NfcAdapter.EXTRA_NDEF_MESSAGES
     );
 
+    const rawData =
+      android.os.Build.VERSION.SDK_INT < 28
+        ? []
+        : intent.getParcelableArrayExtra(sdk28NfcAdapter.EXTRA_DATA);
+
     // every action should map to a different listener you pass in at 'startListening'
     if (action === android.nfc.NfcAdapter.ACTION_NDEF_DISCOVERED) {
       let ndef = android.nfc.tech.Ndef.get(tag);
@@ -83,19 +94,25 @@ export class NfcIntentHandler {
       activity.getIntent().setAction("");
     } else if (action === android.nfc.NfcAdapter.ACTION_TECH_DISCOVERED) {
       let techList = tag.getTechList();
+      let dataString = "";
+      if (rawData) {
+        dataString = this.bytesToString(rawData);
+      }
 
-      for (let i = 0; i < tag.getTechList().length; i++) {
-        let tech = tag.getTechList()[i];
-        /*
-        let tagTech = techList(t);
-        console.log("tagTech: " + tagTech);
-        if (tagTech === NdefFormatable.class.getName()) {
-          fireNdefFormatableEvent(tag);
-        } else if (tagTech === Ndef.class.getName()) {
-          let ndef = Ndef.get(tag);
-          fireNdefEvent(NDEF, ndef, messages);
+      for (let i = 0; i < techList.length; i++) {
+        let tech = techList[i];
+        console.log("tagTech: " + tech);
+        if (
+          tech === android.nfc.tech.IsoDep.class.getName() ||
+          tech === android.nfc.tech.NfcB.class.getName()
+        ) {
+          const result = {
+            rawData: rawData,
+            dataString: dataString
+          };
+
+          onTechDiscoveredListener(result);
         }
-        */
       }
       activity.getIntent().setAction("");
     } else if (action === android.nfc.NfcAdapter.ACTION_TAG_DISCOVERED) {
@@ -397,6 +414,15 @@ export class Nfc implements NfcApi {
     });
   }
 
+  public setOnTechDiscoveredListener(
+    callback: (data: NfcRawData) => void
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      onTechDiscoveredListener = callback;
+      resolve();
+    });
+  }
+
   public eraseTag(): Promise<void> {
     return new Promise((resolve, reject) => {
       const intent =
@@ -453,6 +479,22 @@ export class Nfc implements NfcApi {
         if (!tag) {
           reject("No tag found to write to");
           return;
+        }
+
+        if (arg.rawData) {
+          let rawData: Array<number>;
+          if (typeof rawData === "string") {
+            rawData = Nfc.stringToBytes(arg.rawData as string);
+          } else {
+            rawData = arg.rawData as Array<number>;
+          }
+
+          let errorMessage = Nfc.transceiveData(rawData, tag);
+          if (errorMessage === null) {
+            resolve();
+          } else {
+            reject(errorMessage);
+          }
         }
 
         let records = this.jsonToNdefRecords(arg);
@@ -559,6 +601,49 @@ export class Nfc implements NfcApi {
     return null;
   }
 
+  private static transceiveData(
+    data: Array<number>,
+    tag: android.nfc.Tag
+  ): string {
+    const isoDep = android.nfc.tech.IsoDep.get(tag);
+
+    if (isoDep === null) {
+      const nfcB = android.nfc.tech.NfcB.get(tag);
+
+      if (nfcB) {
+        nfcB.connect();
+        nfcB.transceive(data);
+        nfcB.close();
+        return null;
+      }
+
+      return "Device doesn't support IsoDep or NfcB";
+    }
+
+    try {
+      isoDep.connect();
+    } catch (e) {
+      return "Connection failed";
+    }
+
+    let size = data.length;
+    let maxSize = isoDep.getMaxTransceiveLength();
+
+    if (maxSize < size) {
+      return (
+        "Data too long; tag capacity is " +
+        maxSize +
+        " bytes, data is " +
+        size +
+        " bytes"
+      );
+    }
+
+    isoDep.transceive(data);
+    isoDep.close();
+    return null;
+  }
+
   private jsonToNdefRecords(
     input: WriteTagOptions
   ): Array<android.nfc.NdefRecord> {
@@ -652,7 +737,7 @@ export class Nfc implements NfcApi {
     return records;
   }
 
-  private static stringToBytes(input: string) {
+  private static stringToBytes(input: string): Array<number> {
     let bytes = [];
     for (let n = 0; n < input.length; n++) {
       let c = input.charCodeAt(n);
