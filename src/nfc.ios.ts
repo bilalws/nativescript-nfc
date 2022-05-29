@@ -68,27 +68,29 @@ export class Nfc implements NfcApi, NfcSessionInvalidator {
       }
 
       try {
-        this.delegate = NFCNDEFReaderSessionDelegateImpl.createWithOwnerResultCallbackAndOptions(
-          new WeakRef(this),
-          data => {
-            if (!callback) {
-              console.log(
-                "Ndef discovered, but no listener was set via setOnNdefDiscoveredListener. Ndef: " +
-                  JSON.stringify(data)
-              );
-            } else {
-              // execute on the main thread with this trick, so UI updates are not broken
-              Promise.resolve().then(() => callback(data));
-            }
-          },
-          options
-        );
+        this.delegate =
+          NFCNDEFReaderSessionDelegateImpl.createWithOwnerResultCallbackAndOptions(
+            new WeakRef(this),
+            data => {
+              if (!callback) {
+                console.log(
+                  "Ndef discovered, but no listener was set via setOnNdefDiscoveredListener. Ndef: " +
+                    JSON.stringify(data)
+                );
+              } else {
+                // execute on the main thread with this trick, so UI updates are not broken
+                Promise.resolve().then(() => callback(data));
+              }
+            },
+            options
+          );
 
-        this.session = NFCNDEFReaderSession.alloc().initWithDelegateQueueInvalidateAfterFirstRead(
-          this.delegate,
-          null,
-          options && options.stopAfterFirstRead
-        );
+        this.session =
+          NFCNDEFReaderSession.alloc().initWithDelegateQueueInvalidateAfterFirstRead(
+            this.delegate,
+            null,
+            options && options.stopAfterFirstRead
+          );
 
         if (options && options.scanHint) {
           this.session.alertMessage = options.scanHint;
@@ -132,7 +134,8 @@ export class Nfc implements NfcApi, NfcSessionInvalidator {
 @NativeClass()
 class NFCNDEFReaderSessionDelegateImpl
   extends NSObject
-  implements NFCNDEFReaderSessionDelegate {
+  implements NFCNDEFReaderSessionDelegate
+{
   public static ObjCProtocols = [];
 
   private _owner: WeakRef<NfcSessionInvalidator>;
@@ -177,7 +180,9 @@ class NFCNDEFReaderSessionDelegateImpl
     }
 
     // execute on the main thread with this trick
-    this.resultCallback(NFCNDEFReaderSessionDelegateImpl.ndefToJson(firstMessage));
+    this.resultCallback(
+      NFCNDEFReaderSessionDelegateImpl.ndefToJson(firstMessage)
+    );
   }
 
   readerSessionDidDetectTags(
@@ -227,17 +232,29 @@ class NFCNDEFReaderSessionDelegateImpl
   private static messageToJSON(message: NFCNDEFMessage): Array<NfcNdefRecord> {
     const result = [];
     for (let i = 0; i < message.records.count; i++) {
-      result.push(NFCNDEFReaderSessionDelegateImpl.recordToJSON(message.records.objectAtIndex(i)));
+      result.push(
+        NFCNDEFReaderSessionDelegateImpl.recordToJSON(
+          message.records.objectAtIndex(i)
+        )
+      );
     }
     return result;
   }
 
   private static recordToJSON(record: NFCNDEFPayload): NfcNdefRecord {
-    let payloadAsHexArray = NFCNDEFReaderSessionDelegateImpl.nsdataToHexArray(record.payload);
-    let payloadAsString = NFCNDEFReaderSessionDelegateImpl.nsdataToASCIIString(record.payload);
+    let payloadAsHexArray = NFCNDEFReaderSessionDelegateImpl.nsdataToHexArray(
+      record.payload
+    );
+    let payloadAsString = NFCNDEFReaderSessionDelegateImpl.nsdataToASCIIString(
+      record.payload
+    );
     let payloadAsStringWithPrefix = payloadAsString;
-    const recordType = NFCNDEFReaderSessionDelegateImpl.nsdataToHexArray(record.type);
-    const decimalType = NFCNDEFReaderSessionDelegateImpl.hexToDec(recordType[0]);
+    const recordType = NFCNDEFReaderSessionDelegateImpl.nsdataToHexArray(
+      record.type
+    );
+    const decimalType = NFCNDEFReaderSessionDelegateImpl.hexToDec(
+      recordType[0]
+    );
     if (decimalType === 84) {
       let languageCodeLength: number = +payloadAsHexArray[0];
       payloadAsString = payloadAsStringWithPrefix.substring(
@@ -254,9 +271,14 @@ class NFCNDEFReaderSessionDelegateImpl
     return {
       tnf: record.typeNameFormat, // "typeNameFormat" (1 = well known) - see https://developer.apple.com/documentation/corenfc/nfctypenameformat?changes=latest_major&language=objc
       type: decimalType,
-      id: NFCNDEFReaderSessionDelegateImpl.hexToDecArray(NFCNDEFReaderSessionDelegateImpl.nsdataToHexArray(record.identifier)),
-      payload: NFCNDEFReaderSessionDelegateImpl.hexToDecArray(payloadAsHexArray),
-      payloadAsHexString: NFCNDEFReaderSessionDelegateImpl.nsdataToHexString(record.payload),
+      id: NFCNDEFReaderSessionDelegateImpl.hexToDecArray(
+        NFCNDEFReaderSessionDelegateImpl.nsdataToHexArray(record.identifier)
+      ),
+      payload:
+        NFCNDEFReaderSessionDelegateImpl.hexToDecArray(payloadAsHexArray),
+      payloadAsHexString: NFCNDEFReaderSessionDelegateImpl.nsdataToHexString(
+        record.payload
+      ),
       payloadAsStringWithPrefix: payloadAsStringWithPrefix,
       payloadAsString: payloadAsString
     };
@@ -318,7 +340,9 @@ class NFCNDEFReaderSessionDelegateImpl
   }
 
   private static nsdataToASCIIString(data): string {
-    return NFCNDEFReaderSessionDelegateImpl.hex2a(NFCNDEFReaderSessionDelegateImpl.nsdataToHexString(data));
+    return NFCNDEFReaderSessionDelegateImpl.hex2a(
+      NFCNDEFReaderSessionDelegateImpl.nsdataToHexString(data)
+    );
   }
 
   private static hexToDecArray(hexArray): any {

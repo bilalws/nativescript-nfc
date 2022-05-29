@@ -11,7 +11,6 @@ import {
   NfcNdefData,
   NfcNdefRecord,
   NfcTagData,
-  NfcRawData,
   NfcUriProtocols,
   WriteTagOptions
 } from "./nfc.common";
@@ -23,11 +22,6 @@ const sdk31Intent = {
   FLAG_IMMUTABLE: 67108864
 };
 
-const sdk28NfcAdapter = {
-  EXTRA_DATA: "android.nfc.extra.DATA"
-};
-
-let onTechDiscoveredListener: (data: NfcRawData) => void = null;
 let onTagDiscoveredListener: (data: NfcTagData) => void = null;
 let onNdefDiscoveredListener: (data: NfcNdefData) => void = null;
 
@@ -61,11 +55,6 @@ export class NfcIntentHandler {
       android.nfc.NfcAdapter.EXTRA_NDEF_MESSAGES
     );
 
-    const rawData =
-      android.os.Build.VERSION.SDK_INT < 28
-        ? []
-        : intent.getParcelableArrayExtra(sdk28NfcAdapter.EXTRA_DATA);
-
     // every action should map to a different listener you pass in at 'startListening'
     if (action === android.nfc.NfcAdapter.ACTION_NDEF_DISCOVERED) {
       let ndef = android.nfc.tech.Ndef.get(tag);
@@ -94,25 +83,19 @@ export class NfcIntentHandler {
       activity.getIntent().setAction("");
     } else if (action === android.nfc.NfcAdapter.ACTION_TECH_DISCOVERED) {
       let techList = tag.getTechList();
-      let dataString = "";
-      if (rawData) {
-        dataString = this.bytesToString(rawData);
-      }
 
-      for (let i = 0; i < techList.length; i++) {
-        let tech = techList[i];
-        console.log("tagTech: " + tech);
-        if (
-          tech === android.nfc.tech.IsoDep.class.getName() ||
-          tech === android.nfc.tech.NfcB.class.getName()
-        ) {
-          const result = {
-            rawData: rawData,
-            dataString: dataString
-          };
-
-          onTechDiscoveredListener(result);
+      for (let i = 0; i < tag.getTechList().length; i++) {
+        let tech = tag.getTechList()[i];
+        /*
+        let tagTech = techList(t);
+        console.log("tagTech: " + tagTech);
+        if (tagTech === NdefFormatable.class.getName()) {
+          fireNdefFormatableEvent(tag);
+        } else if (tagTech === Ndef.class.getName()) {
+          let ndef = Ndef.get(tag);
+          fireNdefEvent(NDEF, ndef, messages);
         }
+        */
       }
       activity.getIntent().setAction("");
     } else if (action === android.nfc.NfcAdapter.ACTION_TAG_DISCOVERED) {
@@ -295,6 +278,251 @@ export class NfcIntentHandler {
   }
 }
 
+class NdefHostApduService extends android.nfc.cardemulation.HostApduService {
+  private CardSelect = {
+    SELECT_NONE: 0,
+    SELECT_CCFILE: 1,
+    SELECT_NDEFFILE: 2
+  };
+
+  private APDU_INS = 1;
+  private APDU_P1 = 2;
+  private APDU_P2 = 3;
+  private APDU_SELECT_LC = 4;
+  private APDU_READ_LE = 4;
+
+  private FILEID_CC = 0xe103;
+  private FILEID_NDEF = 0xe104;
+
+  private INS_SELECT = new java.lang.Byte(0xa4);
+  private INS_READ = new java.lang.Byte(0xb0);
+
+  private P1_SELECT_BY_NAME = new java.lang.Byte(0x04);
+  private P1_SELECT_BY_ID = new java.lang.Byte(0x00);
+
+  private DATA_OFFSET = 5;
+  private DATA_SELECT_NDEF = java.nio.ByteBuffer.wrap([
+    0xd2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01
+  ]).array();
+
+  private RET_COMPLETE = java.nio.ByteBuffer.wrap([0x90, 0x00]).array();
+  private RET_NONDEF = java.nio.ByteBuffer.wrap([0x6a, 0x82]).array();
+
+  private FILE_CC = java.nio.ByteBuffer.wrap([
+    0x00,
+    0x0f, //LEN
+    0x20, //Mapping Version
+    0x00,
+    0x40, //MLe
+    0x00,
+    0x40, //MLc
+
+    //TLV(NDEF File Control)
+    0x04, //Tag
+    0x06, //LEN
+    0xe1,
+    0x04, //signature
+    0x00,
+    0x32, //max ndef size
+    0x00, //read access permission
+    0x00 //write access permission
+  ]).array();
+
+  private TAG = "NdefHostApduService";
+
+  private mCardSelect = this.CardSelect.SELECT_NONE;
+  private mNdefFile: null | any[] = null;
+  private mSelectNdef = false;
+
+  constructor(ndefMessage: android.nfc.NdefMessage) {
+    super();
+    let ndefarray = ndefMessage.toByteArray();
+
+    this.mNdefFile = Array.create("byte", ndefarray.length);
+
+    this.mNdefFile[0] = new java.lang.Byte((ndefarray.length & 0xff00) >> 8);
+    this.mNdefFile[1] = new java.lang.Byte(ndefarray.length & 0x00ff);
+
+    java.lang.System.arraycopy(
+      ndefarray,
+      0,
+      this.mNdefFile,
+      2,
+      ndefarray.length
+    );
+  }
+
+  onDeactivated(reason: number) {
+    this.mCardSelect = this.CardSelect.SELECT_NONE;
+    this.mSelectNdef = false;
+  }
+
+  processCommandApdu(
+    commandApdu: native.Array<number>,
+    extras?: android.os.Bundle
+  ): native.Array<number> {
+    let ret = false;
+    let retData: native.Array<number> = null;
+
+    switch (commandApdu[this.APDU_INS]) {
+      case this.INS_SELECT.intValue():
+        switch (commandApdu[this.APDU_P1]) {
+          case this.P1_SELECT_BY_NAME.intValue():
+            // 1. NDEF Tag Application Select
+            if (
+              this.memCmp(
+                commandApdu,
+                this.DATA_OFFSET,
+                this.DATA_SELECT_NDEF,
+                0,
+                commandApdu[this.APDU_SELECT_LC]
+              )
+            ) {
+              //select NDEF application
+              this.mSelectNdef = true;
+              ret = true;
+            } else {
+              console.log("select: fail");
+            }
+            break;
+
+          case this.P1_SELECT_BY_ID.intValue():
+            if (this.mSelectNdef) {
+              let file_id = 0;
+              for (
+                let loop = 0;
+                loop < commandApdu[this.APDU_SELECT_LC];
+                loop++
+              ) {
+                file_id <<= 8;
+                file_id |= commandApdu[this.DATA_OFFSET + loop] & 0xff;
+              }
+
+              switch (file_id) {
+                case this.FILEID_CC:
+                  this.mCardSelect = this.CardSelect.SELECT_CCFILE;
+                  ret = true;
+                  break;
+
+                case this.FILEID_NDEF:
+                  this.mCardSelect = this.CardSelect.SELECT_NDEFFILE;
+                  ret = true;
+                  break;
+
+                default:
+                  break;
+              }
+            } else {
+              console.log("select: not select NDEF app");
+            }
+
+            break;
+
+          default:
+            console.log(
+              this.TAG,
+              "select: unknown p1 : " + commandApdu[this.APDU_P1]
+            );
+            break;
+        }
+        break;
+
+      case this.INS_READ.intValue():
+        if (this.mSelectNdef) {
+          let offset =
+            (commandApdu[this.APDU_P1] << 8) | commandApdu[this.APDU_P2];
+          let src: native.Array<number> = null;
+          switch (this.mCardSelect) {
+            case this.CardSelect.SELECT_CCFILE:
+              src = this.FILE_CC;
+              ret = true;
+              break;
+
+            case this.CardSelect.SELECT_NDEFFILE:
+              src = this.mNdefFile;
+              ret = true;
+              break;
+
+            default:
+              console.log(this.TAG, "read: fail : no select");
+              break;
+          }
+
+          if (ret) {
+            retData = Array.create(
+              "byte",
+              commandApdu[this.APDU_READ_LE] + this.RET_COMPLETE.length
+            );
+
+            java.lang.System.arraycopy(
+              src,
+              offset,
+              retData,
+              0,
+              commandApdu[this.APDU_READ_LE]
+            );
+            //complete
+            java.lang.System.arraycopy(
+              this.RET_COMPLETE,
+              0,
+              retData,
+              commandApdu[this.APDU_READ_LE],
+              this.RET_COMPLETE.length
+            );
+          }
+
+          break;
+        } else {
+          console.log(this.TAG, "read: not select NDEF app");
+        }
+
+        break;
+
+      default:
+        console.log(this.TAG, "unknown INS : " + commandApdu[this.APDU_INS]);
+        break;
+    }
+
+    if (ret) {
+      if (retData == null) {
+        console.log(this.TAG, "return complete");
+        retData = this.RET_COMPLETE;
+      } else {
+        console.log(this.TAG, "------------------------------");
+        console.log(this.TAG, retData);
+        console.log(this.TAG, "------------------------------");
+      }
+    } else {
+      console.log(this.TAG, "return no ndef");
+      retData = this.RET_NONDEF;
+    }
+    return retData;
+  }
+
+  private memCmp(
+    p1: native.Array<number>,
+    offset1: number,
+    p2: native.Array<number>,
+    offset2: number,
+    cmpLen: number
+  ) {
+    let len = p1.length;
+    if (len < offset1 + cmpLen || p2.length < offset2 + cmpLen) {
+      return false;
+    }
+
+    let ret = true;
+    for (let loop = 0; loop < cmpLen; loop++) {
+      if (p1[offset1 + loop] != p2[offset2 + loop]) {
+        ret = false;
+        break;
+      }
+    }
+
+    return ret;
+  }
+}
+
 export const nfcIntentHandler = new NfcIntentHandler();
 
 export class Nfc implements NfcApi {
@@ -414,15 +642,6 @@ export class Nfc implements NfcApi {
     });
   }
 
-  public setOnTechDiscoveredListener(
-    callback: (data: NfcRawData) => void
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      onTechDiscoveredListener = callback;
-      resolve();
-    });
-  }
-
   public eraseTag(): Promise<void> {
     return new Promise((resolve, reject) => {
       const intent =
@@ -479,22 +698,6 @@ export class Nfc implements NfcApi {
         if (!tag) {
           reject("No tag found to write to");
           return;
-        }
-
-        if (arg.rawData) {
-          let rawData: Array<number>;
-          if (typeof rawData === "string") {
-            rawData = Nfc.stringToBytes(arg.rawData as string);
-          } else {
-            rawData = arg.rawData as Array<number>;
-          }
-
-          let errorMessage = Nfc.transceiveData(rawData, tag);
-          if (errorMessage === null) {
-            resolve();
-          } else {
-            reject(errorMessage);
-          }
         }
 
         let records = this.jsonToNdefRecords(arg);
@@ -601,49 +804,6 @@ export class Nfc implements NfcApi {
     return null;
   }
 
-  private static transceiveData(
-    data: Array<number>,
-    tag: android.nfc.Tag
-  ): string {
-    const isoDep = android.nfc.tech.IsoDep.get(tag);
-
-    if (isoDep === null) {
-      const nfcB = android.nfc.tech.NfcB.get(tag);
-
-      if (nfcB) {
-        nfcB.connect();
-        nfcB.transceive(data);
-        nfcB.close();
-        return null;
-      }
-
-      return "Device doesn't support IsoDep or NfcB";
-    }
-
-    try {
-      isoDep.connect();
-    } catch (e) {
-      return "Connection failed";
-    }
-
-    let size = data.length;
-    let maxSize = isoDep.getMaxTransceiveLength();
-
-    if (maxSize < size) {
-      return (
-        "Data too long; tag capacity is " +
-        maxSize +
-        " bytes, data is " +
-        size +
-        " bytes"
-      );
-    }
-
-    isoDep.transceive(data);
-    isoDep.close();
-    return null;
-  }
-
   private jsonToNdefRecords(
     input: WriteTagOptions
   ): Array<android.nfc.NdefRecord> {
@@ -737,7 +897,7 @@ export class Nfc implements NfcApi {
     return records;
   }
 
-  private static stringToBytes(input: string): Array<number> {
+  private static stringToBytes(input: string) {
     let bytes = [];
     for (let n = 0; n < input.length; n++) {
       let c = input.charCodeAt(n);

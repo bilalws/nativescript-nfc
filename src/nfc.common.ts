@@ -80,7 +80,6 @@ export interface UriRecord {
 export interface WriteTagOptions {
   textRecords?: Array<TextRecord>;
   uriRecords?: Array<UriRecord>;
-  rawData?: Array<number> | string;
 }
 
 export interface NfcTagData {
@@ -118,11 +117,6 @@ export interface NfcNdefData extends NfcTagData {
   canMakeReadOnly?: boolean;
 }
 
-export interface NfcRawData extends NfcTagData {
-  rawData: Array<number>;
-  dataString?: string;
-}
-
 export interface OnTagDiscoveredOptions {
   /**
    * On iOS the scan UI can show a message (fi. "Scan a tag").
@@ -149,10 +143,6 @@ export interface NfcApi {
     callback: (data: NfcNdefData) => void,
     options?: NdefListenerOptions
   ): Promise<any>;
-
-  setOnTechDiscoveredListener(
-    callback: (data: NfcRawData) => void
-  ): Promise<any>;
 }
 
 // this was done to generate a nice API for our users
@@ -178,12 +168,6 @@ export class Nfc implements NfcApi {
 
   setOnTagDiscoveredListener(
     callback: (data: NfcTagData) => void
-  ): Promise<any> {
-    return undefined;
-  }
-
-  setOnTechDiscoveredListener(
-    callback: (data: NfcRawData) => void
   ): Promise<any> {
     return undefined;
   }
