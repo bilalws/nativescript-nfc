@@ -66,7 +66,7 @@ const ApduData = {
     0xe1,
     0x04, //signature
     0x00,
-    0x32, //max ndef size
+    0xff, //max ndef size
     0x00, //read access permission
     0x00 //write access permission
   ]).array()
