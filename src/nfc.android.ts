@@ -22,6 +22,62 @@ const sdk31Intent = {
   FLAG_IMMUTABLE: 67108864
 };
 
+const ApduData = {
+  CardSelect: {
+    SELECT_NONE: 0,
+    SELECT_CCFILE: 1,
+    SELECT_NDEFFILE: 2
+  },
+
+  APDU_INS: 1,
+  APDU_P1: 2,
+  APDU_P2: 3,
+  APDU_SELECT_LC: 4,
+  APDU_READ_LE: 4,
+
+  FILEID_CC: 0xe103,
+  FILEID_NDEF: 0xe104,
+
+  INS_SELECT: new java.lang.Byte(0xa4),
+  INS_READ: new java.lang.Byte(0xb0),
+
+  P1_SELECT_BY_NAME: new java.lang.Byte(0x04),
+  P1_SELECT_BY_ID: new java.lang.Byte(0x00),
+
+  DATA_OFFSET: 5,
+  DATA_SELECT_NDEF: java.nio.ByteBuffer.wrap([
+    0xd2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01
+  ]).array(),
+  RET_COMPLETE: java.nio.ByteBuffer.wrap([0x90, 0x00]).array(),
+  RET_NONDEF: java.nio.ByteBuffer.wrap([0x6a, 0x82]).array(),
+
+  FILE_CC: java.nio.ByteBuffer.wrap([
+    0x00,
+    0x0f, //LEN
+    0x20, //Mapping Version
+    0x00,
+    0x40, //MLe
+    0x00,
+    0x40, //MLc
+
+    //TLV(NDEF File Control)
+    0x04, //Tag
+    0x06, //LEN
+    0xe1,
+    0x04, //signature
+    0x00,
+    0x32, //max ndef size
+    0x00, //read access permission
+    0x00 //write access permission
+  ]).array()
+};
+
+const CardData = {
+  mCardSelect: ApduData.CardSelect.SELECT_NONE,
+  mNdefFile: null,
+  mSelectNdef: false
+};
+
 let onTagDiscoveredListener: (data: NfcTagData) => void = null;
 let onNdefDiscoveredListener: (data: NfcNdefData) => void = null;
 
@@ -278,83 +334,43 @@ export class NfcIntentHandler {
   }
 }
 
+@NativeClass()
+@JavaProxy("com.tns.NdefHostApduService")
 class NdefHostApduService extends android.nfc.cardemulation.HostApduService {
-  private CardSelect = {
-    SELECT_NONE: 0,
-    SELECT_CCFILE: 1,
-    SELECT_NDEFFILE: 2
-  };
+  onStartCommand(
+    intent: android.content.Intent,
+    flags: number,
+    startId: number
+  ) {
+    let message = intent.getParcelableExtra("EXTRA_NDEF_MESSAGES");
 
-  private APDU_INS = 1;
-  private APDU_P1 = 2;
-  private APDU_P2 = 3;
-  private APDU_SELECT_LC = 4;
-  private APDU_READ_LE = 4;
+    console.log("onStartCommand ndefMessage: ", message);
 
-  private FILEID_CC = 0xe103;
-  private FILEID_NDEF = 0xe104;
-
-  private INS_SELECT = new java.lang.Byte(0xa4);
-  private INS_READ = new java.lang.Byte(0xb0);
-
-  private P1_SELECT_BY_NAME = new java.lang.Byte(0x04);
-  private P1_SELECT_BY_ID = new java.lang.Byte(0x00);
-
-  private DATA_OFFSET = 5;
-  private DATA_SELECT_NDEF = java.nio.ByteBuffer.wrap([
-    0xd2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01
-  ]).array();
-
-  private RET_COMPLETE = java.nio.ByteBuffer.wrap([0x90, 0x00]).array();
-  private RET_NONDEF = java.nio.ByteBuffer.wrap([0x6a, 0x82]).array();
-
-  private FILE_CC = java.nio.ByteBuffer.wrap([
-    0x00,
-    0x0f, //LEN
-    0x20, //Mapping Version
-    0x00,
-    0x40, //MLe
-    0x00,
-    0x40, //MLc
-
-    //TLV(NDEF File Control)
-    0x04, //Tag
-    0x06, //LEN
-    0xe1,
-    0x04, //signature
-    0x00,
-    0x32, //max ndef size
-    0x00, //read access permission
-    0x00 //write access permission
-  ]).array();
-
-  private TAG = "NdefHostApduService";
-
-  private mCardSelect = this.CardSelect.SELECT_NONE;
-  private mNdefFile: null | any[] = null;
-  private mSelectNdef = false;
-
-  constructor(ndefMessage: android.nfc.NdefMessage) {
-    super();
+    let ndefMessage = message as android.nfc.NdefMessage;
     let ndefarray = ndefMessage.toByteArray();
 
-    this.mNdefFile = Array.create("byte", ndefarray.length);
+    CardData.mNdefFile = Array.create("byte", 2 + ndefarray.length);
 
-    this.mNdefFile[0] = new java.lang.Byte((ndefarray.length & 0xff00) >> 8);
-    this.mNdefFile[1] = new java.lang.Byte(ndefarray.length & 0x00ff);
+    CardData.mNdefFile[0] = new java.lang.Byte(
+      (ndefarray.length & 0xff00) >> 8
+    );
+    CardData.mNdefFile[1] = new java.lang.Byte(ndefarray.length & 0x00ff);
 
     java.lang.System.arraycopy(
       ndefarray,
       0,
-      this.mNdefFile,
+      CardData.mNdefFile,
       2,
       ndefarray.length
     );
+
+    return android.app.Service.START_STICKY;
   }
 
   onDeactivated(reason: number) {
-    this.mCardSelect = this.CardSelect.SELECT_NONE;
-    this.mSelectNdef = false;
+    CardData.mCardSelect = ApduData.CardSelect.SELECT_NONE;
+    CardData.mSelectNdef = false;
+    console.log("Deactivated.", reason);
   }
 
   processCommandApdu(
@@ -364,48 +380,48 @@ class NdefHostApduService extends android.nfc.cardemulation.HostApduService {
     let ret = false;
     let retData: native.Array<number> = null;
 
-    switch (commandApdu[this.APDU_INS]) {
-      case this.INS_SELECT.intValue():
-        switch (commandApdu[this.APDU_P1]) {
-          case this.P1_SELECT_BY_NAME.intValue():
+    switch (commandApdu[ApduData.APDU_INS]) {
+      case ApduData.INS_SELECT.intValue():
+        switch (commandApdu[ApduData.APDU_P1]) {
+          case ApduData.P1_SELECT_BY_NAME.intValue():
             // 1. NDEF Tag Application Select
             if (
               this.memCmp(
                 commandApdu,
-                this.DATA_OFFSET,
-                this.DATA_SELECT_NDEF,
+                ApduData.DATA_OFFSET,
+                ApduData.DATA_SELECT_NDEF,
                 0,
-                commandApdu[this.APDU_SELECT_LC]
+                commandApdu[ApduData.APDU_SELECT_LC]
               )
             ) {
               //select NDEF application
-              this.mSelectNdef = true;
+              CardData.mSelectNdef = true;
               ret = true;
             } else {
               console.log("select: fail");
             }
             break;
 
-          case this.P1_SELECT_BY_ID.intValue():
-            if (this.mSelectNdef) {
+          case ApduData.P1_SELECT_BY_ID.intValue():
+            if (CardData.mSelectNdef) {
               let file_id = 0;
               for (
                 let loop = 0;
-                loop < commandApdu[this.APDU_SELECT_LC];
+                loop < commandApdu[ApduData.APDU_SELECT_LC];
                 loop++
               ) {
                 file_id <<= 8;
-                file_id |= commandApdu[this.DATA_OFFSET + loop] & 0xff;
+                file_id |= commandApdu[ApduData.DATA_OFFSET + loop] & 0xff;
               }
 
               switch (file_id) {
-                case this.FILEID_CC:
-                  this.mCardSelect = this.CardSelect.SELECT_CCFILE;
+                case ApduData.FILEID_CC:
+                  CardData.mCardSelect = ApduData.CardSelect.SELECT_CCFILE;
                   ret = true;
                   break;
 
-                case this.FILEID_NDEF:
-                  this.mCardSelect = this.CardSelect.SELECT_NDEFFILE;
+                case ApduData.FILEID_NDEF:
+                  CardData.mCardSelect = ApduData.CardSelect.SELECT_NDEFFILE;
                   ret = true;
                   break;
 
@@ -420,38 +436,39 @@ class NdefHostApduService extends android.nfc.cardemulation.HostApduService {
 
           default:
             console.log(
-              this.TAG,
-              "select: unknown p1 : " + commandApdu[this.APDU_P1]
+              "select: unknown p1 : " + commandApdu[ApduData.APDU_P1]
             );
             break;
         }
         break;
 
-      case this.INS_READ.intValue():
-        if (this.mSelectNdef) {
+      case ApduData.INS_READ.intValue():
+        if (CardData.mSelectNdef) {
           let offset =
-            (commandApdu[this.APDU_P1] << 8) | commandApdu[this.APDU_P2];
+            (commandApdu[ApduData.APDU_P1] << 8) |
+            commandApdu[ApduData.APDU_P2];
           let src: native.Array<number> = null;
-          switch (this.mCardSelect) {
-            case this.CardSelect.SELECT_CCFILE:
-              src = this.FILE_CC;
+          switch (CardData.mCardSelect) {
+            case ApduData.CardSelect.SELECT_CCFILE:
+              src = ApduData.FILE_CC;
               ret = true;
               break;
 
-            case this.CardSelect.SELECT_NDEFFILE:
-              src = this.mNdefFile;
+            case ApduData.CardSelect.SELECT_NDEFFILE:
+              console.log("SELECT_NDEFFILE");
+              src = CardData.mNdefFile;
               ret = true;
               break;
 
             default:
-              console.log(this.TAG, "read: fail : no select");
+              console.log("read: fail : no select");
               break;
           }
 
-          if (ret) {
+          if (ret && src) {
             retData = Array.create(
               "byte",
-              commandApdu[this.APDU_READ_LE] + this.RET_COMPLETE.length
+              commandApdu[ApduData.APDU_READ_LE] + ApduData.RET_COMPLETE.length
             );
 
             java.lang.System.arraycopy(
@@ -459,42 +476,42 @@ class NdefHostApduService extends android.nfc.cardemulation.HostApduService {
               offset,
               retData,
               0,
-              commandApdu[this.APDU_READ_LE]
+              commandApdu[ApduData.APDU_READ_LE]
             );
             //complete
             java.lang.System.arraycopy(
-              this.RET_COMPLETE,
+              ApduData.RET_COMPLETE,
               0,
               retData,
-              commandApdu[this.APDU_READ_LE],
-              this.RET_COMPLETE.length
+              commandApdu[ApduData.APDU_READ_LE],
+              ApduData.RET_COMPLETE.length
             );
           }
 
           break;
         } else {
-          console.log(this.TAG, "read: not select NDEF app");
+          console.log("read: not select NDEF app");
         }
 
         break;
 
       default:
-        console.log(this.TAG, "unknown INS : " + commandApdu[this.APDU_INS]);
+        console.log("unknown INS : " + commandApdu[ApduData.APDU_INS]);
         break;
     }
 
     if (ret) {
       if (retData == null) {
-        console.log(this.TAG, "return complete");
-        retData = this.RET_COMPLETE;
+        console.log("return complete");
+        retData = ApduData.RET_COMPLETE;
       } else {
-        console.log(this.TAG, "------------------------------");
-        console.log(this.TAG, retData);
-        console.log(this.TAG, "------------------------------");
+        console.log("------------------------------");
+        console.log(retData);
+        console.log("------------------------------");
       }
     } else {
-      console.log(this.TAG, "return no ndef");
-      retData = this.RET_NONDEF;
+      console.log("return no ndef");
+      retData = ApduData.RET_NONDEF;
     }
     return retData;
   }
@@ -532,10 +549,14 @@ export class Nfc implements NfcApi {
   private static firstInstance = true;
   private created = false;
   private started = false;
+  private isNdefHCEMode = false;
+  private isReadonly = false;
   private intent: android.content.Intent;
+  private hceIntent: android.content.Intent;
   private nfcAdapter: android.nfc.NfcAdapter;
 
-  constructor() {
+  constructor(isNdefHCEMode: boolean = false, isReadonly: boolean = false) {
+    this.isNdefHCEMode = isNdefHCEMode;
     this.intentFilters = [];
     this.techLists = Array.create("[Ljava.lang.String;", 0);
 
@@ -564,6 +585,13 @@ export class Nfc implements NfcApi {
           if (pausingNfcAdapter !== null) {
             try {
               this.nfcAdapter.disableForegroundDispatch(args.activity);
+              if (this.isNdefHCEMode) {
+                let cardEmulation =
+                  android.nfc.cardemulation.CardEmulation.getInstance(
+                    this.nfcAdapter
+                  );
+                (cardEmulation as any).unsetPreferredService(args.activity);
+              }
             } catch (e) {
               console.log(
                 "Illegal State Exception stopping NFC. Assuming application is terminating."
@@ -581,6 +609,24 @@ export class Nfc implements NfcApi {
           );
           if (resumingNfcAdapter !== null && !args.activity.isFinishing()) {
             this.started = true;
+            if (this.isNdefHCEMode) {
+              let cardEmulation =
+                android.nfc.cardemulation.CardEmulation.getInstance(
+                  this.nfcAdapter
+                );
+              let hceComponentName = new android.content.ComponentName(
+                Utils.android.getApplicationContext(),
+                NdefHostApduService.class
+              );
+              console.log(
+                "setPreferredService",
+                (cardEmulation as any).setPreferredService(
+                  args.activity,
+                  hceComponentName
+                )
+              );
+            }
+
             resumingNfcAdapter.enableForegroundDispatch(
               args.activity,
               this.pendingIntent,
@@ -600,6 +646,11 @@ export class Nfc implements NfcApi {
           nfcIntentHandler.savedIntent = this.intent;
           nfcIntentHandler.parseMessage();
         }
+      );
+
+      Application.android.on(
+        AndroidApplication.activityDestroyedEvent,
+        (args: AndroidActivityEventData) => {}
       );
     }
   }
@@ -638,6 +689,61 @@ export class Nfc implements NfcApi {
     return new Promise((resolve, reject) => {
       // TODO use options, some day
       onNdefDiscoveredListener = callback;
+      resolve();
+    });
+  }
+
+  public setNdefHCEMode(arg: WriteTagOptions): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let records = this.jsonToNdefRecords(arg);
+      let ndefClass = android.nfc.NdefMessage as any;
+      let ndefMessage = new ndefClass(records);
+      let ndefarray = ndefMessage.toByteArray();
+
+      CardData.mNdefFile = Array.create("byte", 2 + ndefarray.length);
+
+      CardData.mNdefFile[0] = new java.lang.Byte(
+        (ndefarray.length & 0xff00) >> 8
+      );
+      CardData.mNdefFile[1] = new java.lang.Byte(ndefarray.length & 0x00ff);
+
+      java.lang.System.arraycopy(
+        ndefarray,
+        0,
+        CardData.mNdefFile,
+        2,
+        ndefarray.length
+      );
+
+      // const activity =
+      //   Application.android.foregroundActivity ||
+      //   Application.android.startActivity;
+      // if (activity) {
+      //   if (this.created) {
+      //     let records = this.jsonToNdefRecords(arg);
+      //     let ndefClass = android.nfc.NdefMessage as any;
+      //     let ndefMessage = new ndefClass(records);
+      //     let context = Utils.android.getApplicationContext();
+
+      //     console.log(
+      //       "HCE available",
+      //       Application.android.context
+      //         .getPackageManager()
+      //         .hasSystemFeature(
+      //           android.content.pm.PackageManager
+      //             .FEATURE_NFC_HOST_CARD_EMULATION
+      //         )
+      //     );
+      //     this.hceIntent = new android.content.Intent(
+      //       context,
+      //       NdefHostApduService.class
+      //     );
+      //     this.hceIntent.putExtra("EXTRA_NDEF_MESSAGES", ndefMessage);
+
+      //     console.log("startService");
+      //     context.startService(this.hceIntent);
+      //   }
+      // }
       resolve();
     });
   }
@@ -743,6 +849,18 @@ export class Nfc implements NfcApi {
         this.nfcAdapter = android.nfc.NfcAdapter.getDefaultAdapter(
           Utils.android.getApplicationContext()
         );
+
+        if (this.isNdefHCEMode) {
+          let cardEmulation =
+            android.nfc.cardemulation.CardEmulation.getInstance(
+              this.nfcAdapter
+            );
+          console.log(
+            "categoryAllowsForegroundPreference",
+            (cardEmulation as any).categoryAllowsForegroundPreference("other")
+          );
+        }
+
         if (!this.started && this.nfcAdapter !== null && foregroundActivity) {
           this.started = true;
           this.nfcAdapter.enableForegroundDispatch(

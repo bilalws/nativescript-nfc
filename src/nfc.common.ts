@@ -147,32 +147,51 @@ export interface NfcApi {
 
 // this was done to generate a nice API for our users
 export class Nfc implements NfcApi {
+  constructor(isNdefHCEMode: boolean = false, isReadonly: boolean = false) {}
   available(): Promise<boolean> {
-    return undefined;
+    return new Promise(resolve => {
+      resolve(false);
+    });
   }
 
   enabled(): Promise<boolean> {
-    return undefined;
+    return new Promise(resolve => {
+      resolve(false);
+    });
   }
 
   eraseTag(): Promise<any> {
-    return undefined;
+    return new Promise(resolve => {
+      resolve(false);
+    });
   }
 
   setOnNdefDiscoveredListener(
     callback: (data: NfcNdefData) => void,
     options?: NdefListenerOptions
   ): Promise<any> {
-    return undefined;
+    return new Promise(resolve => {
+      resolve(false);
+    });
   }
 
   setOnTagDiscoveredListener(
     callback: (data: NfcTagData) => void
   ): Promise<any> {
-    return undefined;
+    return new Promise(resolve => {
+      resolve(false);
+    });
+  }
+
+  setNdefHCEMode(arg: WriteTagOptions): Promise<void> {
+    return new Promise(resolve => {
+      resolve();
+    });
   }
 
   writeTag(arg: WriteTagOptions): Promise<any> {
-    return undefined;
+    return new Promise(resolve => {
+      resolve(false);
+    });
   }
 }
